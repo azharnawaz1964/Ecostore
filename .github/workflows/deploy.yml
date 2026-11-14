@@ -1,0 +1,61 @@
+name: 'Deploy Ecostore to Cloud Run'
+
+on:
+  push:
+    branches:
+      - main
+
+env:
+  PROJECT_ID: 'ecostore-514711'
+  REGION: 'europe-west2'               # Update if your service is in another region
+  SERVICE_NAME: 'ecostore'             # Update to your exact Cloud Run service name
+  REPO_NAME: 'ecostore-repo'           # Update to your Artifact Registry repo name
+  FILESTORE_IP: '10.x.x.x'             # Your Filestore instance IP address
+  FILESTORE_SHARE: '/vol1'             # Your Filestore file share name
+  GCS_BUCKET: 'your-ecostore-bucket'   # Your Cloud Storage bucket name
+  VPC_CONNECTOR: 'your-vpc-connector'  # Required for Cloud Run to reach Filestore IP
+
+permissions:
+  contents: 'read'
+  id-token: 'write'
+
+jobs:
+  deploy:
+    name: 'Build and Deploy to Cloud Run'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.WIF_PROVIDER }}
+          service_account: 'github-deployer@ecostore-514711.iam.gserviceaccount.com'
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Configure Docker for Artifact Registry
+        run: gcloud auth configure-docker ${{ env.REGION }}-docker.pkg.dev --quiet
+
+      - name: Build and Push Container Image
+        run: |
+          IMAGE_URI="${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPO_NAME }}/${{ env.SERVICE_NAME }}:${{ github.sha }}"
+          docker build -t "$IMAGE_URI" .
+          docker push "$IMAGE_URI"
+
+      - name: Deploy to Cloud Run with Filestore & GCS Mounts
+        run: |
+          IMAGE_URI="${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPO_NAME }}/${{ env.SERVICE_NAME }}:${{ github.sha }}"
+          gcloud run deploy ${{ env.SERVICE_NAME }} \
+            --project=${{ env.PROJECT_ID }} \
+            --region=${{ env.REGION }} \
+            --image="$IMAGE_URI" \
+            --execution-environment=gen2 \
+            --vpc-connector=${{ env.VPC_CONNECTOR }} \
+            --add-volume=name=filestore-vol,type=nfs,location=${{ env.FILESTORE_IP }}:${{ env.FILESTORE_SHARE }} \
+            --add-volume-mount=volume=filestore-vol,mount-path=/mnt/filestore \
+            --add-volume=name=gcs-vol,type=cloud-storage,bucket=${{ env.GCS_BUCKET }} \
+            --add-volume-mount=volume=gcs-vol,mount-path=/mnt/gcs
