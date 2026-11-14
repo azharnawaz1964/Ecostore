@@ -37,4 +37,5 @@ jobs:
           gcloud run deploy ${{ env.SERVICE_NAME }} \
             --source . \
             --project=${{ env.PROJECT_ID }} \
-            --region=${{ env.REGION }}
+            --region=${{ env.REGION }} \
+            --labels=managed-by=github-actions
